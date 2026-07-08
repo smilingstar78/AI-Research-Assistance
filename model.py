@@ -29,12 +29,11 @@ if "current_file" not in st.session_state:
 
 llm = ChatGroq(api_key=os.getenv('GROQ_API_KEY'),model='llama-3.3-70b-versatile')
 
+embeddings_model = HuggingFaceEmbeddings(model_name = 'BAAI/bge-small-en-v1.5')
+
 class Chatbot_with_file:
 
-    def __init__(self, file, query):
-        self.file = file
-        self.query = query
-
+    @staticmethod
     def file_operations(file):
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
@@ -43,10 +42,6 @@ class Chatbot_with_file:
 
         loader = PyPDFLoader(temp_path)
         file = loader.load()
-
-        embeddings_model = HuggingFaceEmbeddings(
-            model_name = 'BAAI/bge-small-en-v1.5'
-        )
 
         chunks = SemanticChunker(embeddings_model)
 
@@ -66,7 +61,8 @@ class Chatbot_with_file:
         retriever = chroma.as_retriever(search_kwargs={"k": 5})
 
         st.session_state.retriever = retriever
-
+    
+    @staticmethod
     def retrieve_content(retriever, query):
 
         prompt = ChatPromptTemplate.from_messages([
@@ -83,7 +79,6 @@ class Chatbot_with_file:
 
         ("human", "{query}")
         ])
-        st.session_state.message_history.append(HumanMessage(content=query))
         history = ""
 
         for msg in st.session_state.message_history:
@@ -93,12 +88,7 @@ class Chatbot_with_file:
 
         results = retriever.invoke(search_query)
         
-        content = []
-
-        for i, doc in enumerate(results):
-            content.append(doc.page_content)
-
-        doc_content = "\n".join(content)
+        doc_content = "\n".join(doc.page_content for doc in results)
 
         chain = prompt | llm | parser
 
@@ -113,11 +103,11 @@ class Chatbot_with_file:
         )
 
         with st.chat_message("assistant"):
-            st.write(result)
+            st.markdown(result)
 
 class Chatbot_no_file:
-    def __init__(self, query):
-        self.query = query
+
+    @staticmethod
     def chat(query):
         prompt = ChatPromptTemplate.from_messages([
         ("system",
@@ -139,7 +129,7 @@ class Chatbot_no_file:
         )
 
         with st.chat_message("assistant"):
-            st.write(result)
+            st.markdown(result)
 
 if "message_history" not in st.session_state:
      st.session_state.message_history = []
@@ -151,19 +141,16 @@ if uploaded_file is not None:
         Chatbot_with_file.file_operations(uploaded_file)
 
         st.session_state.current_file = uploaded_file.name
-    # Chatbot_with_file.file_operations(uploaded_file)
-    # answer = Chatbot_with_file.file_operations(uploaded_file)
 
-for message in st.session_state.message_history:
+for message in st.session_state.message_history[-6:]:
 
     if isinstance(message, HumanMessage):
         with st.chat_message("user"):
-            st.write(message.content)
+            st.markdown(message.content)
 
     elif isinstance(message, AIMessage):
         with st.chat_message("assistant"):
-            st.write(message.content)
-            # st.markdown(message.content)
+            st.markdown(message.content)
 
 query = st.chat_input('Ask me anything....')
 
