@@ -18,85 +18,80 @@ st.title('MY CHATBOT')
 load_dotenv()
 
 parser = StrOutputParser()
-# file_path = r"C:\Users\Dell\Downloads\_OceanofPDF.com_Atomic_Habits_-_James_Clear.pdf"
 
 uploaded_file = st.file_uploader('Upload a file', type=['pdf'])
-if uploaded_file is not None:
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-        temp_file.write(uploaded_file.getvalue())
-        temp_path = temp_file.name
-    # reader = PdfReader(file_path)
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
 
-    # text = ""
-    # for page in reader.pages:
-    #     text+=page.extract_text()
+if "current_file" not in st.session_state:
+    st.session_state.current_file = None
 
-    # st.write(text[:1000])
+llm = ChatGroq(api_key=os.getenv('GROQ_API_KEY'),model='llama-3.3-70b-versatile')
 
-    # doc = Document(page_content=text)
+class Chatbot_with_file:
 
-    loader = PyPDFLoader(temp_path)
-    file = loader.load()
+    def __init__(self, file, query):
+        self.file = file
+        self.query = query
 
-    embeddings_model = HuggingFaceEmbeddings(
-        model_name = 'BAAI/bge-small-en-v1.5'
+    def file_operations(file):
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_file.write(file.getvalue())
+            temp_path = temp_file.name
+
+        loader = PyPDFLoader(temp_path)
+        file = loader.load()
+
+        embeddings_model = HuggingFaceEmbeddings(
+            model_name = 'BAAI/bge-small-en-v1.5'
+        )
+
+        chunks = SemanticChunker(embeddings_model)
+
+
+        docs = chunks.split_documents(file)
+
+
+        chroma = Chroma(
+            collection_name = 'documents',
+            embedding_function = embeddings_model,
+            persist_directory= "./chroma_db"
     )
+        chroma.reset_collection()
 
-    chunks = SemanticChunker(embeddings_model)
+        chroma.add_documents(docs)
 
-    # docs1 = embeddings_model.create_documents([file])
+        retriever = chroma.as_retriever(search_kwargs={"k": 5})
 
-    docs = chunks.split_documents(file)
+        st.session_state.retriever = retriever
 
-    # st.write(docs[0].page_content)
+    def retrieve_content(retriever, query):
 
-    chroma = Chroma(
-        collection_name = 'documents',
-        embedding_function = embeddings_model,
-        persist_directory= "./chroma_db"
-   )
+        prompt = ChatPromptTemplate.from_messages([
+        ("system",
+        """You are a helpful assistant.
+        Use the given context to answer the user's question.
+        Be friendly and use emojis.
 
-    chroma.add_documents(docs)
+        Context:
+        {doc_content}
+        """),
 
-    retriever = chroma.as_retriever(search_kwargs={'k':5})
+        MessagesPlaceholder(variable_name="chat_history"),
 
-    # st.subheader("Retrieved Chunks")
-
-
-    prompt = ChatPromptTemplate.from_messages([
-    ("system",
-     """You are a helpful assistant.
-     Use the given context to answer the user's question.
-     Be friendly and use emojis.
-
-     Context:
-     {doc_content}
-     """),
-
-    MessagesPlaceholder(variable_name="chat_history"),
-
-    ("human", "{query}")
-    ])
-
-    llm = ChatGroq(api_key=os.getenv('GROQ_API_KEY'),model='llama-3.3-70b-versatile')
-
-    chain = prompt | llm | parser
-
-    if "message_history" not in st.session_state:
-        st.session_state.message_history = []
-
-    query = st.chat_input('Ask me anything....')
-    st.write("Query:", query)
-
-    if query:
+        ("human", "{query}")
+        ])
         st.session_state.message_history.append(HumanMessage(content=query))
-        results = retriever.invoke(query)
+        history = ""
 
-        # for i, doc in enumerate(results):
-        #     st.write(f"### Chunk {i+1}")
-        #     st.write(doc.page_content)
-        #     st.divider()
+        for msg in st.session_state.message_history:
+            history += msg.content + "\n"
+
+        search_query = history + "\n" + query
+
+        results = retriever.invoke(search_query)
         
         content = []
 
@@ -105,19 +100,77 @@ if uploaded_file is not None:
 
         doc_content = "\n".join(content)
 
+        chain = prompt | llm | parser
+
         result = chain.invoke({
-            'query': message_history,
-            'doc_content':doc_content
+        'query': query,
+        'doc_content': doc_content,
+        'chat_history': st.session_state.message_history
+    })
+
+        st.session_state.message_history.append(
+            AIMessage(content=result)
+        )
+
+        with st.chat_message("assistant"):
+            st.write(result)
+
+class Chatbot_no_file:
+    def __init__(self, query):
+        self.query = query
+    def chat(query):
+        prompt = ChatPromptTemplate.from_messages([
+        ("system",
+        """You are a helpful assistant.
+        Talk very friednly. Use emojis.
+        """),
+
+        MessagesPlaceholder(variable_name="chat_history"),
+
+        ("human", "{query}")
+        ])
+        chain = prompt | llm | parser
+        result = chain.invoke({
+            'query':query,
+            'chat_history': st.session_state.message_history
         })
-        st.session_state.message_history.append(HumanMessage(content=query))
-        st.write(result)
+        st.session_state.message_history.append(
+            AIMessage(content=result)
+        )
 
-    # user_input = st.chat_input('Ask me anything....')
+        with st.chat_message("assistant"):
+            st.write(result)
 
-    # while True:
-    # # if user_input:
-    #     result = chain.invoke(input('User: '))
-    #     print('ChatBot: ', result)
+if "message_history" not in st.session_state:
+     st.session_state.message_history = []
 
-        # st.write(result)
+if uploaded_file is not None:
 
+    if st.session_state.current_file != uploaded_file.name:
+
+        Chatbot_with_file.file_operations(uploaded_file)
+
+        st.session_state.current_file = uploaded_file.name
+    # Chatbot_with_file.file_operations(uploaded_file)
+    # answer = Chatbot_with_file.file_operations(uploaded_file)
+
+for message in st.session_state.message_history:
+
+    if isinstance(message, HumanMessage):
+        with st.chat_message("user"):
+            st.write(message.content)
+
+    elif isinstance(message, AIMessage):
+        with st.chat_message("assistant"):
+            st.write(message.content)
+
+query = st.chat_input('Ask me anything....')
+
+if query:
+    if st.session_state.retriever is not None:
+        Chatbot_with_file.retrieve_content(
+            st.session_state.retriever,
+            query
+        )
+    else:
+        Chatbot_no_file.chat(query)
