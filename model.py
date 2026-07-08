@@ -163,10 +163,17 @@ for message in st.session_state.message_history:
     elif isinstance(message, AIMessage):
         with st.chat_message("assistant"):
             st.write(message.content)
+            # st.markdown(message.content)
 
 query = st.chat_input('Ask me anything....')
 
 if query:
+    st.session_state.message_history.append(
+        HumanMessage(content=query)
+    )
+
+    with st.chat_message("user"):
+        st.markdown(query)
     if st.session_state.retriever is not None:
         Chatbot_with_file.retrieve_content(
             st.session_state.retriever,
